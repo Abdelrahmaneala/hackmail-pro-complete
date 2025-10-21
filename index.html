@@ -1,238 +1,0 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>HackMail Pro - نظام الإيميل المؤقت المتقدم</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-</head>
-<body>
-    <div class="terminal">
-        <!-- Header -->
-        <div class="terminal-header">
-            <div class="window-controls">
-                <div class="control close"></div>
-                <div class="control minimize"></div>
-                <div class="control maximize"></div>
-            </div>
-            <div class="title">HackMail Pro v5.0 - نظام الإيميلات المؤقتة المتقدم</div>
-        </div>
-
-        <!-- Main Content -->
-        <div class="terminal-body">
-            <!-- System Status -->
-            <div class="status-panel">
-                <div class="status-item active">
-                    <i class="fas fa-server"></i>
-                    <span>الحالة: <span id="connectionStatus">جاري الاتصال...</span></span>
-                </div>
-                <div class="status-item">
-                    <i class="fas fa-shield-alt"></i>
-                    <span>الخدمات: <span id="servicesCount">2/2</span></span>
-                </div>
-                <div class="status-item">
-                    <i class="fas fa-database"></i>
-                    <span>MongoDB: <span id="dbStatus">متصل</span></span>
-                </div>
-            </div>
-
-            <!-- Control Panel -->
-            <div class="control-panel">
-                <div class="panel-header">
-                    <i class="fas fa-cogs"></i>
-                    <span>لوحة التحكم</span>
-                </div>
-                
-                <div class="controls-grid">
-                    <button class="control-btn primary" onclick="createEmail()">
-                        <i class="fas fa-plus"></i>
-                        إنشاء إيميل جديد
-                    </button>
-                    <button class="control-btn" onclick="checkMessages()">
-                        <i class="fas fa-sync"></i>
-                        تحديث الرسائل
-                    </button>
-                    
-                    <!-- زر عرض كل الرسائل -->
-                    <button class="control-btn success" onclick="showAllMessages()">
-                        <i class="fas fa-eye"></i>
-                        عرض كل الرسائل
-                    </button>
-                    
-                    <div class="service-selector">
-                        <label>اختر الخدمة:</label>
-                        <select id="serviceSelect">
-                            <option value="">تلقائي (موصى به)</option>
-                            <option value="mail.tm">Mail.tm</option>
-                            <option value="guerrillamail">GuerrillaMail</option>
-                        </select>
-                    </div>
-                    
-                    <button class="control-btn danger" onclick="resetSystem()">
-                        <i class="fas fa-redo"></i>
-                        إعادة تعيين
-                    </button>
-                </div>
-            </div>
-
-            <!-- Email Accounts -->
-            <div class="accounts-panel">
-                <div class="panel-header">
-                    <i class="fas fa-envelope"></i>
-                    <span>الحسابات النشطة</span>
-                    <span class="badge" id="accountsCount">0</span>
-                </div>
-                <div class="accounts-list" id="accountsList">
-                    <div class="empty-state">
-                        <i class="fas fa-inbox"></i>
-                        <p>لا توجد حسابات نشطة</p>
-                        <small>انقر على "إنشاء إيميل جديد" لبدء الاستخدام</small>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Messages -->
-            <div class="messages-panel">
-                <div class="panel-header">
-                    <i class="fas fa-inbox"></i>
-                    <span>الرسائل الواردة</span>
-                    <span class="badge" id="messagesCount">0</span>
-                </div>
-                <div class="messages-list" id="messagesList">
-                    <div class="empty-state">
-                        <i class="fas fa-envelope-open"></i>
-                        <p>لا توجد رسائل جديدة</p>
-                        <small>سيظهر هنا أي رسائل تصل إلى بريدك</small>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Code Extraction Panel -->
-            <div class="code-panel">
-                <div class="panel-header">
-                    <i class="fas fa-code"></i>
-                    <span>استخراج الأكواد</span>
-                </div>
-                <div class="code-content">
-                    <div class="code-input-section">
-                        <textarea id="codeInput" placeholder="الصق محتوى الرسالة هنا لاستخراج الأكواد..."></textarea>
-                        <button class="btn btn-primary" onclick="extractCodeFromText()">
-                            <i class="fas fa-key"></i>
-                            استخراج الأكواد
-                        </button>
-                    </div>
-                    <div class="code-results" id="codeResults">
-                        <div class="empty-state">
-                            <i class="fas fa-key"></i>
-                            <p>لا توجد أكواد مستخرجة</p>
-                            <small>الصق محتوى الرسالة واضغط على استخراج الأكواد</small>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Log Console -->
-            <div class="console-panel">
-                <div class="panel-header">
-                    <i class="fas fa-terminal"></i>
-                    <span>سجل النظام</span>
-                    <button class="btn-small" onclick="clearConsole()">
-                        <i class="fas fa-trash"></i>
-                        مسح
-                    </button>
-                </div>
-                <div class="console-output" id="consoleOutput">
-                    <div class="log-entry info">
-                        <span class="timestamp" id="currentTime">[--:--:--]</span>
-                        <span class="type-icon">🚀</span>
-                        <span class="message">جاري تهيئة نظام HackMail Pro...</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Footer -->
-        <div class="terminal-footer">
-            <div class="footer-info">
-                <span>HackMail Pro v5.0</span>
-                <span>|</span>
-                <span>الخدمة: <span id="currentService">multi-service</span></span>
-                <span>|</span>
-                <span>MongoDB: <span id="mongoStatus">متصل</span></span>
-                <span>|</span>
-                <span id="serverTime">--:--:--</span>
-            </div>
-        </div>
-    </div>
-
-    <!-- Loading Overlay -->
-    <div class="loading-overlay" id="loadingOverlay">
-        <div class="loading-spinner">
-            <div class="spinner"></div>
-            <p>جاري المعالجة...</p>
-        </div>
-    </div>
-
-    <!-- All Messages Modal -->
-    <div class="modal-overlay" id="allMessagesModal">
-        <div class="modal-content large">
-            <div class="modal-header">
-                <h3><i class="fas fa-inbox"></i> جميع الرسائل المستلمة</h3>
-                <button class="modal-close" onclick="closeAllMessagesModal()">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="messages-container" id="allMessagesContainer">
-                    <div class="empty-state">
-                        <i class="fas fa-envelope-open"></i>
-                        <p>لا توجد رسائل</p>
-                        <small>لم يتم استلام أي رسائل بعد</small>
-                    </div>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="checkMessages()">
-                    <i class="fas fa-sync"></i>
-                    تحديث الرسائل
-                </button>
-                <button class="btn" onclick="closeAllMessagesModal()">
-                    <i class="fas fa-times"></i>
-                    إغلاق
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Message Detail Modal -->
-    <div class="modal-overlay" id="messageDetailModal">
-        <div class="modal-content large">
-            <div class="modal-header">
-                <h3><i class="fas fa-envelope"></i> تفاصيل الرسالة</h3>
-                <button class="modal-close" onclick="closeMessageDetailModal()">
-                    <i class="fas fa-times"></i>
-                </button>
-            </div>
-            <div class="modal-body">
-                <div id="messageDetailContent">
-                    <!-- سيتم ملؤها بالبيانات -->
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-primary" onclick="copyMessageContent()">
-                    <i class="fas fa-copy"></i>
-                    نسخ المحتوى
-                </button>
-                <button class="btn" onclick="closeMessageDetailModal()">
-                    <i class="fas fa-times"></i>
-                    إغلاق
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <script src="script.js"></script>
-</body>
-</html>
