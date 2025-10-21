@@ -1,6 +1,3 @@
-// server.js (final - with mail.tm proxy + retries)
-// Built from original user file (see file reference). :contentReference[oaicite:1]{index=1}
-
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -67,73 +64,6 @@ const EmailMessage = require('./models/EmailMessage');
 
 const axios = require('axios');
 
-/**
- * --- New: mail.tm proxy endpoint ---
- * This lets clients (or server-side code) call /api/mailtm/... which forwards to https://api.mail.tm/...
- * Proxy sets safe headers (User-Agent, Accept) and forwards method/body. Useful to avoid CORS/header issues.
- */
-app.all('/api/mailtm/*', async (req, res) => {
-    try {
-        const tail = req.params[0] || '';
-        const targetUrl = `https://api.mail.tm/${tail}`;
-
-        // Build headers: copy most headers except host, accept-encoding, etc.
-        const forwardedHeaders = Object.assign({}, req.headers);
-        delete forwardedHeaders.host;
-        delete forwardedHeaders['accept-encoding'];
-
-        // Enforce User-Agent + Accept to mimic real browser/API client
-        forwardedHeaders['User-Agent'] = forwardedHeaders['User-Agent'] || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro';
-        forwardedHeaders['Accept'] = forwardedHeaders['Accept'] || 'application/ld+json, application/json';
-
-        const axiosConfig = {
-            url: targetUrl,
-            method: req.method,
-            headers: forwardedHeaders,
-            timeout: 20000,
-            validateStatus: () => true // forward status as-is
-        };
-
-        if (req.method !== 'GET' && req.method !== 'HEAD') {
-            axiosConfig.data = req.body;
-        }
-
-        const response = await axios(axiosConfig);
-
-        // Forward response headers except hop-by-hop and certain security headers
-        const excludedHeaders = ['transfer-encoding', 'connection', 'keep-alive', 'content-encoding'];
-        Object.keys(response.headers || {}).forEach(h => {
-            if (!excludedHeaders.includes(h.toLowerCase())) {
-                res.setHeader(h, response.headers[h]);
-            }
-        });
-
-        res.status(response.status).send(response.data);
-    } catch (err) {
-        console.error('❌ Proxy mail.tm error:', err.message || err);
-        res.status(500).json({ success: false, error: 'Proxy to mail.tm failed', details: err.message || String(err) });
-    }
-});
-
-// test endpoint for mail.tm connectivity
-app.get('/api/test-mailtm', async (req, res) => {
-    try {
-        // Try contacting mail.tm domains endpoint directly with enforced headers + timeout
-        const response = await axios.get('https://api.mail.tm/domains', {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro',
-                'Accept': 'application/ld+json, application/json'
-            },
-            timeout: 15000
-        });
-
-        res.json({ ok: true, status: response.status, dataSummary: Array.isArray(response.data['hydra:member']) ? response.data['hydra:member'].slice(0,5) : response.data });
-    } catch (err) {
-        console.error('❌ test-mailtm error:', err.message || err);
-        res.json({ ok: false, error: err.message || String(err) });
-    }
-});
-
 // خدمة البريد المتعددة - بس الخدمات اللي شغالة حقيقي
 class MultiEmailService {
     constructor() {
@@ -144,72 +74,39 @@ class MultiEmailService {
         };
     }
 
-    // helper: retry wrapper for axios calls (simple)
-    async _axiosRetry(fn, attempts = 2, delayMs = 1200) {
-        let lastErr = null;
-        for (let i = 0; i < attempts; i++) {
-            try {
-                return await fn();
-            } catch (e) {
-                lastErr = e;
-                if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
-            }
-        }
-        throw lastErr;
-    }
-
-    // Mail.tm Service - يعمل بشكل ممتاز مع رؤوس مُعدّلة و retry
+    // Mail.tm Service - يعمل بشكل ممتاز
     async mailtmService(sessionId) {
         try {
             console.log('🔄 Trying Mail.tm service...');
-
-            // Attempt to get domains (with retries)
-            let domains = [];
-            try {
-                const resp = await this._axiosRetry(() => axios.get('https://api.mail.tm/domains', {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro',
-                        'Accept': 'application/ld+json, application/json'
-                    },
-                    timeout: 15000
-                }), 2, 1000);
-                domains = (resp.data && resp.data['hydra:member']) ? resp.data['hydra:member'].map(d => d.domain) : [];
-            } catch (e) {
-                console.warn('⚠️ getMailTMDomains failed, using fallback domains. Err:', e.message || e);
-                domains = ['mail.tm', 'bugfoo.com', 'dcctb.com'];
-            }
-
+            const domains = await this.getMailTMDomains();
             const domain = domains[Math.floor(Math.random() * domains.length)];
             const username = this.generateUsername();
             const email = `${username}@${domain}`;
             const password = this.generatePassword();
 
-            // إنشاء الحساب في mail.tm مع رؤوس واضحة
-            const accountResponse = await this._axiosRetry(() => axios.post('https://api.mail.tm/accounts', {
+            // إنشاء الحساب في mail.tm
+            const accountResponse = await axios.post('https://api.mail.tm/accounts', {
                 address: email,
                 password: password
             }, {
                 headers: { 
                     'Content-Type': 'application/json',
-                    'Accept': 'application/ld+json, application/json',
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro'
+                    'Accept': 'application/ld+json'
                 },
                 timeout: 15000
-            }), 2, 1200);
+            });
 
-            if (accountResponse.status === 201 || accountResponse.status === 200) {
-                // احصل على التوكن
-                const tokenResponse = await this._axiosRetry(() => axios.post('https://api.mail.tm/token', {
+            if (accountResponse.status === 201) {
+                const tokenResponse = await axios.post('https://api.mail.tm/token', {
                     address: email,
                     password: password
                 }, {
                     headers: {
                         'Content-Type': 'application/json',
-                        'Accept': 'application/ld+json, application/json',
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro'
+                        'Accept': 'application/ld+json'
                     },
                     timeout: 15000
-                }), 2, 1200);
+                });
 
                 const accountData = {
                     email: email,
@@ -225,15 +122,11 @@ class MultiEmailService {
                 const savedAccount = await EmailAccount.create(accountData);
                 console.log(`✅ Mail.tm account created: ${email}`);
                 return { success: true, ...savedAccount._doc };
-            } else {
-                console.warn('⚠️ mail.tm account creation returned non-201 status', accountResponse.status, accountResponse.data);
             }
         } catch (error) {
-            console.error('❌ Mail.tm error:', error.message || error);
-            return { success: false, error: error.message || String(error) };
+            console.error('❌ Mail.tm error:', error.message);
+            return { success: false, error: error.message };
         }
-
-        return { success: false, error: 'Mail.tm account creation did not succeed' };
     }
 
     // GuerrillaMail Service - يعمل بشكل ممتاز
@@ -269,14 +162,9 @@ class MultiEmailService {
         }
     }
 
-    // (باقي دوال الخدمة كما هي - جلب الرسائل، معالجة، تنسيق، الخ)
     async getMailTMDomains() {
         try {
             const response = await axios.get('https://api.mail.tm/domains', {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) HackMailPro',
-                    'Accept': 'application/ld+json, application/json'
-                },
                 timeout: 10000
             });
             return response.data['hydra:member'].map(d => d.domain);
@@ -333,8 +221,6 @@ class MultiEmailService {
         return { success: false, error: 'All services failed. Please try again later.' };
     }
 
-    // باقي الدوال (getMessages, processMessagesWithFullContent, formatters, helpers)
-    // ... keep original implementations (unchanged) ...
     async getMessages(accountId, email, service) {
         try {
             const account = await EmailAccount.findOne({ accountId });
@@ -354,8 +240,10 @@ class MultiEmailService {
                     break;
             }
 
+            // معالجة الرسائل مع جلب المحتوى الكامل
             const processedMessages = await this.processMessagesWithFullContent(rawMessages, service, account, email);
             
+            // حفظ الرسائل في MongoDB
             for (const msg of processedMessages) {
                 await EmailMessage.findOneAndUpdate(
                     { 
@@ -382,9 +270,276 @@ class MultiEmailService {
         }
     }
 
-    // The rest of the methods (processMessagesWithFullContent, extractors, formatters, get full messages, etc.)
-    // For brevity keep them identical to your original implementations (they remain unchanged).
-    // If you want, I can paste them here again verbatim — but they are kept as-is.
+    async processMessagesWithFullContent(rawMessages, service, account, email) {
+        if (!rawMessages || !Array.isArray(rawMessages) || rawMessages.length === 0) {
+            return [];
+        }
+
+        const processedMessages = [];
+        
+        for (const rawMsg of rawMessages) {
+            try {
+                let fullContent = '';
+                let messageDetails = {};
+
+                // جلب المحتوى الكامل حسب الخدمة
+                switch (service) {
+                    case 'mail.tm':
+                        messageDetails = await this.getMailTMFullMessage(account.token, rawMsg.id);
+                        fullContent = this.formatMailTMContent(messageDetails, rawMsg);
+                        break;
+                    case 'guerrillamail':
+                        messageDetails = await this.getGuerrillaFullMessage(account.token, rawMsg.mail_id || rawMsg.id);
+                        fullContent = this.formatGuerrillaContent(messageDetails, rawMsg);
+                        break;
+                }
+
+                if (!fullContent || fullContent.trim() === '') {
+                    console.log(`⚠️ تخطي رسالة بدون محتوى: ${rawMsg.id}`);
+                    continue;
+                }
+
+                const processedMsg = {
+                    id: rawMsg.id || rawMsg.mail_id || `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    sender: this.extractSender(rawMsg, service),
+                    subject: this.extractSubject(rawMsg, service),
+                    content: fullContent,
+                    preview: this.generatePreview(fullContent),
+                    date: this.extractDate(rawMsg, service),
+                    unread: this.isUnread(rawMsg, service),
+                    service: service
+                };
+
+                processedMessages.push(processedMsg);
+                
+            } catch (error) {
+                console.error(`❌ Error processing message:`, error);
+                continue;
+            }
+        }
+
+        return processedMessages;
+    }
+
+    // دوال مساعدة لاستخراج المعلومات
+    extractSender(rawMsg, service) {
+        switch (service) {
+            case 'mail.tm':
+                return rawMsg.from?.name || rawMsg.from?.address || 'Unknown Sender';
+            case 'guerrillamail':
+                return rawMsg.mail_from || 'Unknown Sender';
+            default:
+                return rawMsg.from?.address || rawMsg.from || rawMsg.sender || 'Unknown Sender';
+        }
+    }
+
+    extractSubject(rawMsg, service) {
+        switch (service) {
+            case 'mail.tm':
+                return rawMsg.subject || 'No Subject';
+            case 'guerrillamail':
+                return rawMsg.mail_subject || 'No Subject';
+            default:
+                return rawMsg.subject || rawMsg.mail_subject || 'No Subject';
+        }
+    }
+
+    extractDate(rawMsg, service) {
+        switch (service) {
+            case 'mail.tm':
+                return rawMsg.createdAt ? new Date(rawMsg.createdAt).toLocaleString('ar-EG') : new Date().toLocaleString('ar-EG');
+            case 'guerrillamail':
+                return rawMsg.mail_timestamp ? new Date(rawMsg.mail_timestamp * 1000).toLocaleString('ar-EG') : new Date().toLocaleString('ar-EG');
+            default:
+                return rawMsg.date || rawMsg.createdAt || new Date().toLocaleString('ar-EG');
+        }
+    }
+
+    isUnread(rawMsg, service) {
+        switch (service) {
+            case 'mail.tm':
+                return !rawMsg.seen;
+            case 'guerrillamail':
+                return rawMsg.mail_read !== 1;
+            default:
+                return rawMsg.unread !== false;
+        }
+    }
+
+    // دوال تنسيق المحتوى
+    formatMailTMContent(messageDetails, rawMsg) {
+        if (messageDetails && messageDetails.text) {
+            return this.createDetailedContent(
+                rawMsg.from?.name || rawMsg.from?.address,
+                rawMsg.subject,
+                messageDetails.text,
+                messageDetails.html,
+                'Mail.tm',
+                rawMsg.createdAt
+            );
+        }
+        return this.createDetailedContent(
+            rawMsg.from?.name || rawMsg.from?.address,
+            rawMsg.subject,
+            rawMsg.intro || 'No content available from Mail.tm',
+            null,
+            'Mail.tm',
+            rawMsg.createdAt
+        );
+    }
+
+    formatGuerrillaContent(messageDetails, rawMsg) {
+        if (messageDetails && messageDetails.mail_body) {
+            return this.createDetailedContent(
+                rawMsg.mail_from,
+                rawMsg.mail_subject,
+                messageDetails.mail_body,
+                null,
+                'GuerrillaMail',
+                rawMsg.mail_timestamp
+            );
+        }
+        return this.createDetailedContent(
+            rawMsg.mail_from,
+            rawMsg.mail_subject,
+            rawMsg.mail_excerpt || 'No content available from GuerrillaMail',
+            null,
+            'GuerrillaMail',
+            rawMsg.mail_timestamp
+        );
+    }
+
+    // دالة لإنشاء محتوى مفصل
+    createDetailedContent(sender, subject, textContent, htmlContent, service, date) {
+        const timestamp = date ? new Date(date).toLocaleString('ar-EG') : new Date().toLocaleString('ar-EG');
+        
+        let content = `
+📧 تفاصيل الرسالة الكاملة
+══════════════════════════════════════
+
+📋 المعلومات الأساسية:
+────────────────────
+• 🏷️  الموضوع: ${subject || 'بدون موضوع'}
+• 👤 المرسل: ${sender || 'غير معروف'}
+• 🕐 التاريخ: ${timestamp}
+• 🛠️  الخدمة: ${service}
+• 📬 حالة الرسالة: ${textContent ? 'مستلمة بنجاح' : 'غير متاحة'}
+
+📄 محتوى الرسالة:
+────────────────
+${textContent || 'لا يوجد محتوى نصي'}
+
+`;
+
+        if (htmlContent) {
+            content += `
+🌐 المحتوى HTML:
+────────────────
+${htmlContent}
+
+`;
+        }
+
+        content += `
+🔍 المعلومات التقنية:
+───────────────────
+• ⏰ وقت المعالجة: ${new Date().toLocaleString('ar-EG')}
+• 📊 حجم المحتوى: ${textContent ? textContent.length + ' حرف' : 'غير محدد'}
+• 🔄 مصدر البيانات: ${service}
+• 🆔 معرف فريد: ${Math.random().toString(36).substr(2, 9).toUpperCase()}
+
+══════════════════════════════════════
+💡 تم استلام هذه الرسالة عبر نظام HackMail Pro
+        `;
+
+        return content;
+    }
+
+    // دالة لإنشاء معاينة
+    generatePreview(content) {
+        if (!content) return 'لا يوجد محتوى للمعاينة';
+        const cleanContent = content.replace(/\n\s*\n/g, '\n').trim();
+        const preview = cleanContent.substring(0, 120);
+        return cleanContent.length > 120 ? preview + '...' : preview;
+    }
+
+    // دوال جلب المحتوى الكامل
+    async getMailTMFullMessage(token, messageId) {
+        try {
+            const response = await axios.get(`https://api.mail.tm/messages/${messageId}`, {
+                headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/ld+json'
+                },
+                timeout: 15000
+            });
+            return response.data;
+        } catch (error) {
+            console.error('❌ Error fetching Mail.tm full message:', error.message);
+            return null;
+        }
+    }
+
+    async getGuerrillaFullMessage(sidToken, messageId) {
+        try {
+            const response = await axios.get(`https://www.guerrillamail.com/ajax.php?f=fetch_email&email_id=${messageId}&sid_token=${sidToken}`, {
+                timeout: 15000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+            return response.data;
+        } catch (error) {
+            console.error('❌ Error fetching GuerrillaMail full message:', error.message);
+            return null;
+        }
+    }
+
+    // دوال جلب الرسائل الأساسية
+    async getMailTMMessages(token) {
+        try {
+            const response = await axios.get('https://api.mail.tm/messages', {
+                headers: { 
+                    'Authorization': `Bearer ${token}`,
+                    'Accept': 'application/ld+json'
+                },
+                timeout: 20000
+            });
+            return response.data['hydra:member'] || [];
+        } catch (error) {
+            console.error('❌ Mail.tm messages error:', error.message);
+            return [];
+        }
+    }
+
+    async getGuerrillaMessages(sidToken) {
+        try {
+            const response = await axios.get(`https://www.guerrillamail.com/ajax.php?f=get_email_list&offset=0&sid_token=${sidToken}`, {
+                timeout: 20000,
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                }
+            });
+            return response.data.list || [];
+        } catch (error) {
+            console.error('❌ GuerrillaMail messages error:', error.message);
+            return [];
+        }
+    }
+
+    async getServiceStatus() {
+        const accountsCount = await EmailAccount.countDocuments();
+        const messagesCount = await EmailMessage.countDocuments();
+        
+        return {
+            currentService: 'multi-service',
+            domains: 15,
+            availableServices: Object.keys(this.services),
+            status: 'active',
+            activeAccounts: accountsCount,
+            totalMessages: messagesCount
+        };
+    }
 }
 
 const emailService = new MultiEmailService();
